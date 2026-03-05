@@ -1,7 +1,7 @@
 import type { Task } from './types';
 import { getDateBucket } from './dateHelpers';
 
-export const INBOX_LIMIT = 12;
+export const INBOX_LIMIT = 25;
 
 // ── INBOX SCORING ──
 // Ranks tasks by urgency, priority, and strategy alignment.
@@ -10,6 +10,9 @@ export const INBOX_LIMIT = 12;
 // full context — email body, deal notes, meeting transcript snippets.
 
 export function scoreTask(task: Task, strategyItems: string[]): number {
+  // Prefer AI score when available
+  if (typeof task.aiScore === 'number') return task.aiScore;
+
   let score = 0;
 
   // Priority weight

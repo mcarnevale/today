@@ -229,6 +229,13 @@ body {
   padding: 3px 9px; font-size: 11px; font-weight: 500; color: var(--text);
 }
 .source-chip .dot { width: 6px; height: 6px; border-radius: 50%; }
+.source-chip-link {
+  text-decoration: none; color: inherit;
+  cursor: pointer; transition: background 0.15s, border-color 0.15s;
+}
+.source-chip-link:hover {
+  background: #2a2a2e; border-color: var(--accent);
+}
 .dot-green { background: var(--low); }
 .dot-amber { background: var(--medium); }
 .dot-red { background: var(--high); }
@@ -395,6 +402,8 @@ body {
   background: #16161a; color: var(--text);
 }
 .modal-input { padding: 10px 12px; margin-bottom: 8px; }
+.strategy-fields .modal-input { margin-bottom: 10px; }
+.strategy-fields .modal-input:last-of-type { margin-bottom: 0; }
 .modal-input:focus, .modal-textarea:focus, .modal-select:focus { border-color: var(--accent); }
 .modal-textarea { padding: 12px; resize: vertical; margin-bottom: 8px; line-height: 1.6; }
 .modal-select { padding: 8px 10px; }
@@ -411,6 +420,17 @@ body {
 }
 .insight-dot:nth-child(2) { animation-delay: 0.2s; }
 .insight-dot:nth-child(3) { animation-delay: 0.4s; }
+
+.analyze-spinner {
+  width: 10px; height: 10px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: analyze-spin 0.7s linear infinite;
+}
+@keyframes analyze-spin {
+  to { transform: rotate(360deg); }
+}
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 5px; }

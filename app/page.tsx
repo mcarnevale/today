@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Task, ViewType, FocusFilter, FilterType } from '@/lib/types';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { signOut } from 'next-auth/react';
+import type { Task, ViewType, FocusFilter, FilterType, GeneratedTask } from '@/lib/types';
 import { getDateBucket, DATE_BUCKET_ORDER, DATE_BUCKET_ICON } from '@/lib/dateHelpers';
 import { scoreTask, generateInsight, INBOX_LIMIT } from '@/lib/scoring';
-import { defaultStrategy } from '@/lib/mockData';
+import { defaultStrategy } from '@/lib/defaults';
 
 // ── CONSTANTS ──
 
@@ -26,6 +28,7 @@ const FILTER_TYPE_LABEL: Record<FilterType, string> = {
   activity: 'Activity',
   client: 'Client',
   project: 'Project',
+  date: 'Date',
 };
 
 // ── CHART ──
@@ -36,10 +39,25 @@ interface ChartBar {
   color: string;
 }
 
+const ACTIVITY_LABEL_TO_VALUE: Record<string, string> = {
+  Email: 'email',
+  Meeting: 'meeting',
+  Focus: 'focus',
+  Other: 'other',
+};
+
+const PRIORITY_LABEL_TO_VALUE: Record<string, string> = {
+  High: 'high',
+  Medium: 'medium',
+  Low: 'low',
+};
+
 function SidebarChart({
   data,
+  onBarClick,
 }: {
   data: ChartBar[];
+  onBarClick?: (label: string) => void;
 }) {
   const [tooltip, setTooltip] = useState<{
     x: number;
@@ -56,12 +74,16 @@ function SidebarChart({
   const barW = Math.floor((W - (n - 1) * gap) / n);
   const maxVal = Math.max(...data.map((d) => d.value), 1);
 
+  const handleBarClick = (d: ChartBar) => {
+    if (d.value > 0 && onBarClick) onBarClick(d.label);
+  };
+
   return (
     <div className="sidebar-chart-wrap">
       <svg
         height={H}
         viewBox={`0 0 ${W} ${H}`}
-        style={{ display: 'block', width: '100%' }}
+        style={{ display: 'block', width: '100%', cursor: onBarClick ? 'pointer' : undefined }}
       >
         {data.map((d, i) => {
           const x = i * (barW + gap);
@@ -87,6 +109,7 @@ function SidebarChart({
                 width={barW}
                 height={barAreaH}
                 fill="transparent"
+                style={{ cursor: onBarClick && d.value > 0 ? 'pointer' : undefined }}
                 onMouseOver={(e) =>
                   setTooltip({
                     x: e.clientX,
@@ -97,6 +120,7 @@ function SidebarChart({
                   })
                 }
                 onMouseLeave={() => setTooltip(null)}
+                onClick={() => handleBarClick(d)}
               />
             </g>
           );
@@ -194,6 +218,79 @@ function buildChartData(
     .map(([k, v], i) => ({ label: k, value: v, color: palette[i % palette.length] }));
 }
 
+// ── GENERATED TASK CARD ──
+
+const URGENCY_LABEL: Record<string, string> = {
+  today: '<span class="mi xs">bolt</span> Today',
+  this_week: '<span class="mi xs">calendar_today</span> This week',
+  later: '<span class="mi xs">schedule</span> Later',
+};
+
+const SOURCE_LABEL: Record<string, string> = {
+  gmail: 'Gmail',
+  granola: 'Granola',
+  hubspot: 'HubSpot',
+};
+
+function GeneratedTaskCard({
+  task,
+  onToggle,
+}: {
+  task: GeneratedTask & { completed?: boolean };
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <div className={`task-card priority-${task.priority} ${task.completed ? 'completed' : ''}`}>
+      <div className="inbox-rank">#{task.rank}</div>
+      <div
+        className={`task-check ${task.completed ? 'checked' : ''}`}
+        onClick={(e) => { e.stopPropagation(); onToggle(task.id); }}
+      >
+        {task.completed && (
+          <span style={{ color: '#fff', fontSize: 11, fontWeight: 700 }}>✓</span>
+        )}
+      </div>
+      <div className="task-body">
+        <div className="task-header">
+          <div className="task-title">{task.title}</div>
+          <div className="source-badge">
+            {task.sources.map((s) => SOURCE_LABEL[s] ?? s).join(' · ')}
+          </div>
+        </div>
+        <div className="task-desc" style={{ fontStyle: 'italic', color: '#8e8e99' }}>
+          {task.context}
+        </div>
+        <div className="task-meta">
+          <span
+            className={`tag priority-${task.priority}`}
+            dangerouslySetInnerHTML={{ __html: (task.priority.charAt(0).toUpperCase() + task.priority.slice(1)) }}
+          />
+          <span
+            className="tag"
+            dangerouslySetInnerHTML={{ __html: URGENCY_LABEL[task.urgency] || task.urgency }}
+          />
+          <span
+            className={`tag activity-${task.activity}`}
+            dangerouslySetInnerHTML={{
+              __html: {
+                email: '<span class="mi xs">mail</span> Email',
+                meeting: '<span class="mi xs">event</span> Meeting',
+                focus: '<span class="mi xs">radio_button_checked</span> Focus',
+                other: '<span class="mi xs">more_horiz</span> Other',
+              }[task.activity] || task.activity,
+            }}
+          />
+          {task.client && (
+            <span className="tag">
+              <span className="mi xs">business</span> {task.client}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── TASK CARD ──
 
 function TaskCard({
@@ -264,12 +361,18 @@ function TaskCard({
 
 // ── MAIN DASHBOARD ──
 
-export default function Dashboard() {
+function DashboardContent() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [generatedTasks, setGeneratedTasks] = useState<(GeneratedTask & { completed?: boolean })[]>([]);
   const [sourceStatus, setSourceStatus] = useState<Record<string, string>>({
-    superhuman: 'mock',
-    granola: 'mock',
-    hubspot: 'mock',
+    gmail: 'disconnected',
+    granola: 'disconnected',
+    hubspot: 'disconnected',
+  });
+  const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({
+    gmail: 0,
+    granola: 0,
+    hubspot: 0,
   });
   const [refreshedAt, setRefreshedAt] = useState<string | null>(null);
   const [currentView, setCurrentViewRaw] = useState<ViewType>('inbox');
@@ -277,8 +380,10 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [strategyItems, setStrategyItems] = useState<string[]>(defaultStrategy);
+  const [strategyLoaded, setStrategyLoaded] = useState(false);
   const [insightText, setInsightText] = useState<string>('');
   const [insightLoading, setInsightLoading] = useState(false);
+  const [analyzeLoading, setAnalyzeLoading] = useState(false);
   const [strategyModalOpen, setStrategyModalOpen] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [nextId, setNextId] = useState(100);
@@ -292,20 +397,56 @@ export default function Dashboard() {
   const [addClient, setAddClient] = useState('');
   const [addProject, setAddProject] = useState('');
 
-  const strategyTextRef = useRef('');
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchParams = useSearchParams();
+
+  // Strategy modal fields (synced when modal opens)
+  const [strategy1, setStrategy1] = useState('');
+  const [strategy2, setStrategy2] = useState('');
+  const [strategy3, setStrategy3] = useState('');
 
   // ── FETCH TASKS ──
-  useEffect(() => {
+  const refetchTasks = useCallback(() => {
     fetch('/api/tasks')
       .then((r) => r.json())
       .then((data) => {
         setTasks(data.tasks);
+        if (Array.isArray(data.generatedTasks) && data.generatedTasks.length > 0) {
+          setGeneratedTasks(data.generatedTasks.map((t: GeneratedTask) => ({ ...t, completed: false })));
+        }
         setSourceStatus(data.sources);
+        setSourceCounts(data.sourceCounts ?? { gmail: 0, granola: 0, hubspot: 0 });
         setRefreshedAt(data.refreshedAt);
       })
       .catch(console.error);
   }, []);
+
+  useEffect(() => {
+    refetchTasks();
+  }, [refetchTasks]);
+
+  // ── FETCH SETTINGS (Weekly Strategy) ──
+  useEffect(() => {
+    fetch('/api/settings')
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.weeklyStrategy?.length === 3) {
+          setStrategyItems(data.weeklyStrategy);
+        }
+        setStrategyLoaded(true);
+      })
+      .catch(() => setStrategyLoaded(true));
+  }, []);
+
+  // Handle Granola OAuth callback
+  useEffect(() => {
+    const granola = searchParams.get('granola');
+    const error = searchParams.get('granola_error');
+    if (granola === 'connected' || error) {
+      refetchTasks();
+      window.history.replaceState({}, '', '/');
+    }
+  }, [searchParams, refetchTasks]);
 
   // ── INSIGHT ──
   useEffect(() => {
@@ -313,6 +454,15 @@ export default function Dashboard() {
       setInsightText(generateInsight(tasks, strategyItems));
     }
   }, [tasks, strategyItems]);
+
+  // Sync strategy modal fields when modal opens
+  useEffect(() => {
+    if (strategyModalOpen) {
+      setStrategy1(strategyItems[0] ?? '');
+      setStrategy2(strategyItems[1] ?? '');
+      setStrategy3(strategyItems[2] ?? '');
+    }
+  }, [strategyModalOpen, strategyItems]);
 
   // ── NEXT REFRESH LABEL ──
   useEffect(() => {
@@ -362,6 +512,13 @@ export default function Dashboard() {
     );
   }, []);
 
+  // ── GENERATED TASK TOGGLE ──
+  const toggleGeneratedTask = useCallback((id: string) => {
+    setGeneratedTasks((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
+    );
+  }, []);
+
   // ── VISIBLE TASKS ──
   const visibleTasks = useCallback(() => {
     let pool = tasks.filter((t) => !t.completed);
@@ -385,6 +542,7 @@ export default function Dashboard() {
         if (f.type === 'activity') return task.activity === f.value;
         if (f.type === 'client') return task.client === f.value;
         if (f.type === 'project') return task.project === f.value;
+        if (f.type === 'date') return getDateBucket(task.dueDate) === f.value;
         return true;
       }),
     [focusFilters]
@@ -414,12 +572,15 @@ export default function Dashboard() {
 
   // ── STRATEGY SAVE ──
   const saveStrategy = () => {
-    const lines = strategyTextRef.current
-      .split('\n')
-      .map((l) => l.replace(/^\d+\.\s*/, '').trim())
-      .filter(Boolean);
+    const lines = [strategy1.trim(), strategy2.trim(), strategy3.trim()].filter(Boolean);
+    if (lines.length !== 3) return; // Require all 3
     setStrategyItems(lines);
     setStrategyModalOpen(false);
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ weeklyStrategy: lines }),
+    }).catch(console.error);
   };
 
   // ── REFRESH INSIGHT ──
@@ -431,25 +592,142 @@ export default function Dashboard() {
     }, 800);
   };
 
+  // ── RE-ANALYZE (AI PIPELINE) ──
+  const runAIAnalysis = useCallback(() => {
+    setAnalyzeLoading(true);
+    fetch('/api/ai/analyze', { method: 'POST' })
+      .then((r) => {
+        if (!r.ok) return r.json().then((d) => Promise.reject(new Error(d.details || d.error || 'Analysis failed')));
+        return r.json();
+      })
+      .then(() => refetchTasks())
+      .catch((err) => {
+        console.error('[ai]', err);
+        alert(err instanceof Error ? err.message : 'AI analysis failed');
+      })
+      .finally(() => setAnalyzeLoading(false));
+  }, [refetchTasks]);
+
   // ── DERIVED ──
   const openCount = tasks.filter((t) => !t.completed).length;
-  const inboxCount = Math.min(openCount, INBOX_LIMIT);
+  const generatedOpenCount = generatedTasks.filter((t) => !t.completed).length;
+  const inboxCount = generatedTasks.length > 0 ? generatedOpenCount : Math.min(openCount, INBOX_LIMIT);
   const dateStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric',
   });
 
   const viewMeta =
     currentView === 'inbox'
-      ? `${inboxCount} surfaced · ${dateStr}`
+      ? generatedTasks.length > 0
+        ? `${inboxCount} action item${inboxCount !== 1 ? 's' : ''} · ${dateStr}`
+        : `${inboxCount} surfaced · ${dateStr}`
       : currentView === 'focus' && focusFilters.length > 0
       ? `${tasks.filter((t) => !t.completed && matchesFocus(t)).length} match${tasks.filter((t) => !t.completed && matchesFocus(t)).length !== 1 ? 'es' : ''} · ${focusFilters.length} filter${focusFilters.length !== 1 ? 's' : ''} active`
       : `${openCount} open · ${dateStr}`;
 
   const chartData = buildChartData(currentView, tasks, strategyItems);
 
+  const handleChartBarClick = useCallback(
+    (label: string) => {
+      let type: FilterType;
+      let value: string;
+      if (currentView === 'inbox' || currentView === 'priority') {
+        value = PRIORITY_LABEL_TO_VALUE[label] ?? label.toLowerCase();
+        type = 'priority';
+      } else if (currentView === 'activity') {
+        value = ACTIVITY_LABEL_TO_VALUE[label] ?? label.toLowerCase();
+        type = 'activity';
+      } else if (currentView === 'date') {
+        value = label;
+        type = 'date';
+      } else if (currentView === 'client' || currentView === 'focus') {
+        value = label;
+        type = 'client';
+      } else if (currentView === 'project') {
+        value = label;
+        type = 'project';
+      } else {
+        return;
+      }
+      addFocusFilter(type, value);
+    },
+    [currentView, addFocusFilter]
+  );
+
   // ── RENDER CONTENT ──
   const renderContent = () => {
     if (currentView === 'inbox') {
+      // If AI-generated tasks exist, show them — this is the primary experience
+      if (generatedTasks.length > 0) {
+        const open = generatedTasks.filter((t) => !t.completed);
+        const done = generatedTasks.filter((t) => t.completed);
+        const todayItems = open.filter((t) => t.urgency === 'today');
+        const thisWeekItems = open.filter((t) => t.urgency === 'this_week');
+        const laterItems = open.filter((t) => t.urgency === 'later');
+
+        return (
+          <>
+            <div className="inbox-header">
+              <span className="inbox-ai-label">
+                <span className="mi xs">auto_awesome</span>
+                AI-generated · {open.length} action item{open.length !== 1 ? 's' : ''}
+              </span>
+              <span className="inbox-total-label">{done.length} completed</span>
+            </div>
+
+            {todayItems.length > 0 && (
+              <>
+                <div className="group-header">
+                  <span className="group-label">
+                    <span className="mi xs">bolt</span> Do today
+                  </span>
+                  <div className="group-line" />
+                  <span className="group-count">{todayItems.length}</span>
+                </div>
+                {todayItems.map((t) => (
+                  <GeneratedTaskCard key={t.id} task={t} onToggle={toggleGeneratedTask} />
+                ))}
+              </>
+            )}
+
+            {thisWeekItems.length > 0 && (
+              <>
+                <div className="group-header">
+                  <span className="group-label">
+                    <span className="mi xs">calendar_today</span> This week
+                  </span>
+                  <div className="group-line" />
+                  <span className="group-count">{thisWeekItems.length}</span>
+                </div>
+                {thisWeekItems.map((t) => (
+                  <GeneratedTaskCard key={t.id} task={t} onToggle={toggleGeneratedTask} />
+                ))}
+              </>
+            )}
+
+            {laterItems.length > 0 && (
+              <>
+                <div className="group-header">
+                  <span className="group-label">
+                    <span className="mi xs">schedule</span> Later
+                  </span>
+                  <div className="group-line" />
+                  <span className="group-count">{laterItems.length}</span>
+                </div>
+                {laterItems.map((t) => (
+                  <GeneratedTaskCard key={t.id} task={t} onToggle={toggleGeneratedTask} />
+                ))}
+              </>
+            )}
+
+            {open.length === 0 && (
+              <div className="empty-state">All done. Nice work.</div>
+            )}
+          </>
+        );
+      }
+
+      // Fallback: no AI tasks yet — show scored source tasks with prompt to analyze
       const pool = visibleTasks();
       const ranked = pool
         .map((t) => ({ task: t, score: scoreTask(t, strategyItems) }))
@@ -459,9 +737,9 @@ export default function Dashboard() {
       return (
         <>
           <div className="inbox-header">
-            <span className="inbox-ai-label">
-              <span className="mi xs">auto_awesome</span>
-              AI-ranked · top {ranked.length}
+            <span className="inbox-ai-label" style={{ color: '#636366' }}>
+              <span className="mi xs">info</span>
+              Hit "Re-analyze" to generate your AI task list
             </span>
             <span className="inbox-total-label">{pool.length} total open</span>
           </div>
@@ -588,7 +866,7 @@ export default function Dashboard() {
   const sourceDot = (status: string) => {
     if (status === 'connected') return 'dot-green';
     if (status === 'error') return 'dot-red';
-    return 'dot-amber';
+    return 'dot-amber'; // disconnected
   };
 
   return (
@@ -651,7 +929,7 @@ export default function Dashboard() {
         {/* Chart */}
         <div className="sidebar-section">
           <div className="sidebar-section-label">Chart</div>
-          <SidebarChart data={chartData} />
+          <SidebarChart data={chartData} onBarClick={handleChartBarClick} />
         </div>
 
         <div className="sidebar-divider" />
@@ -687,18 +965,67 @@ export default function Dashboard() {
             ) : (
               <>
                 <div className="sidebar-insight-text">{insightText}</div>
-                <button className="sidebar-insight-refresh" onClick={refreshInsight}>
-                  <span className="mi xs">refresh</span> Refresh
-                </button>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button className="sidebar-insight-refresh" onClick={refreshInsight}>
+                    <span className="mi xs">refresh</span> Refresh
+                  </button>
+                  <button
+                    className="sidebar-insight-refresh"
+                    onClick={runAIAnalysis}
+                    disabled={analyzeLoading}
+                  >
+                    {analyzeLoading ? (
+                      <>
+                        <span className="analyze-spinner" />
+                        <span>Analyzing...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="mi xs">psychology</span> Re-analyze now
+                      </>
+                    )}
+                  </button>
+                </div>
               </>
             )}
           </div>
         </div>
 
-        <div className="last-updated">
-          {refreshedAt
-            ? `Last refreshed: ${new Date(refreshedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-            : 'Loading…'}
+        <div style={{ marginTop: 'auto', padding: '12px 12px 16px' }}>
+          <div style={{ fontSize: 10, color: '#44444a', padding: '0 6px 8px' }}>
+            {refreshedAt
+              ? `Last refreshed: ${new Date(refreshedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+              : 'Loading…'}
+          </div>
+          <button
+            onClick={() => signOut({ callbackUrl: '/login' })}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 7,
+              width: '100%',
+              padding: '7px 8px',
+              background: 'none',
+              border: 'none',
+              borderRadius: 7,
+              cursor: 'pointer',
+              color: '#636366',
+              fontSize: 12,
+              fontFamily: 'inherit',
+              transition: 'background 0.12s, color 0.12s',
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.background = '#1e1e20';
+              e.currentTarget.style.color = '#8e8e99';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.background = 'none';
+              e.currentTarget.style.color = '#636366';
+            }}
+          >
+            <span className="mi xs">logout</span>
+            Sign out
+          </button>
         </div>
       </aside>
 
@@ -742,14 +1069,41 @@ export default function Dashboard() {
         {/* Source status bar */}
         <div className="refresh-bar">
           <div className="refresh-sources">
-            {Object.entries(sourceStatus).map(([name, status]) => (
-              <div key={name} className="source-chip">
-                <div className={`dot ${sourceDot(status)}`} />
-                {name.charAt(0).toUpperCase() + name.slice(1)}
-              </div>
-            ))}
+            {Object.entries(sourceStatus).map(([name, status]) => {
+              const isGranolaDisconnected = name === 'granola' && status === 'disconnected';
+              const label = name.charAt(0).toUpperCase() + name.slice(1);
+              const count = sourceCounts[name] ?? 0;
+              const countLabel = status === 'connected' ? ` · ${count}` : '';
+              return isGranolaDisconnected ? (
+                <a
+                  key={name}
+                  href="/api/granola/connect"
+                  className="source-chip source-chip-link"
+                >
+                  <div className={`dot ${sourceDot(status)}`} />
+                  {label} · Connect
+                </a>
+              ) : (
+                <div key={name} className="source-chip">
+                  <div className={`dot ${sourceDot(status)}`} />
+                  {label}{countLabel}
+                </div>
+              );
+            })}
           </div>
-          <div className="next-refresh">{nextRefresh}</div>
+          <div className="next-refresh">
+            {nextRefresh}
+            {process.env.NODE_ENV === 'development' && (
+              <a
+                href="/api/debug/sources"
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ marginLeft: 12, fontSize: 11, color: '#636366' }}
+              >
+                Debug sources
+              </a>
+            )}
+          </div>
         </div>
 
         {/* Focus bar */}
@@ -802,12 +1156,26 @@ export default function Dashboard() {
             What are your 3 top priorities this week? The system uses these to rank and surface
             what matters most.
           </div>
-          <textarea
-            className="modal-textarea"
-            defaultValue={strategyItems.map((s, i) => `${i + 1}. ${s}`).join('\n')}
-            onChange={(e) => { strategyTextRef.current = e.target.value; }}
-            rows={5}
-          />
+          <div className="strategy-fields">
+            <input
+              className="modal-input"
+              placeholder="1. e.g. Launch Bissell — connect systems, support sales, schedule kickoffs"
+              value={strategy1}
+              onChange={(e) => setStrategy1(e.target.value)}
+            />
+            <input
+              className="modal-input"
+              placeholder="2. e.g. Advance Geo and Cantoo — write SOWs, create in HubSpot"
+              value={strategy2}
+              onChange={(e) => setStrategy2(e.target.value)}
+            />
+            <input
+              className="modal-input"
+              placeholder="3. e.g. Keep the business running — clear accounting, marketing, ops"
+              value={strategy3}
+              onChange={(e) => setStrategy3(e.target.value)}
+            />
+          </div>
           <div className="modal-actions">
             <button className="btn-cancel" onClick={() => setStrategyModalOpen(false)}>
               Cancel
@@ -888,5 +1256,13 @@ export default function Dashboard() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function Dashboard() {
+  return (
+    <Suspense fallback={<div className="empty-state">Loading…</div>}>
+      <DashboardContent />
+    </Suspense>
   );
 }

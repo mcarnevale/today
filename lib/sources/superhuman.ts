@@ -1,74 +1,26 @@
 import type { Task } from '../types';
 
 // ── SUPERHUMAN DATA FETCHER ──
-// Called server-side by /api/tasks. Swap the body of fetchSuperhuman()
-// for real API calls once you have credentials in .env.local.
+// Called server-side by /api/tasks.
 //
-// Superhuman doesn't have a public API yet (as of 2026).
-// Options:
-//   1. Gmail API (Superhuman runs on Gmail) — OAuth2 + gmail.readonly scope
-//   2. Superhuman native API if/when it ships
+// Superhuman doesn't have a public API (as of 2026). To wire up real email tasks:
+//   → Use Gmail API (Superhuman is built on Gmail)
+//   → OAuth2: gmail.readonly scope
+//   → Env: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN
+//   → Fetch threads with label "UNREAD" or "STARRED", map to Task schema
 //
-// Env vars: SUPERHUMAN_API_KEY or GMAIL_REFRESH_TOKEN
-
 export interface SourceResult {
   tasks: Task[];
-  status: 'connected' | 'mock' | 'error';
-}
-
-function mockTasks(): Task[] {
-  return [
-    {
-      id: 2,
-      title: 'Follow up: Apex Foundation grant timeline',
-      desc: 'No response to last two emails. Board meeting is March 15 — need sign-off before then.',
-      priority: 'high',
-      activity: 'email',
-      client: 'Apex Foundation',
-      project: 'Grant Renewal',
-      source: 'Superhuman · 2 days ago',
-      dueDate: '2026-03-15',
-      completed: false,
-      manual: false,
-    },
-    {
-      id: 3,
-      title: 'Review SOW draft for Westside Creative',
-      desc: 'Tom sent over v2 of the scope — two open questions on deliverables timeline.',
-      priority: 'high',
-      activity: 'focus',
-      client: 'Westside Creative',
-      project: 'New SOW',
-      source: 'Superhuman · Today 9am',
-      dueDate: '2026-03-04',
-      completed: false,
-      manual: false,
-    },
-    {
-      id: 7,
-      title: 'Reply to Carlos re: referral intro',
-      desc: 'Carlos connected you with a potential new client. Short reply to confirm interest.',
-      priority: 'low',
-      activity: 'email',
-      client: 'Prospects',
-      project: 'Business Dev',
-      source: 'Superhuman · Yesterday',
-      dueDate: '2026-03-03',
-      completed: false,
-      manual: false,
-    },
-  ];
+  status: 'connected' | 'disconnected' | 'error';
 }
 
 export async function fetchSuperhuman(): Promise<SourceResult> {
   const apiKey = process.env.SUPERHUMAN_API_KEY;
-  if (!apiKey) return { tasks: mockTasks(), status: 'mock' };
+  if (!apiKey) return { tasks: [], status: 'disconnected' };
 
   try {
-    // TODO: replace with real implementation
-    // const emails = await getEmailsNeedingAction(apiKey);
-    // return { tasks: emails.map(transformEmailToTask), status: 'connected' };
-    return { tasks: mockTasks(), status: 'mock' };
+    // TODO: replace with real Superhuman API when available
+    return { tasks: [], status: 'disconnected' };
   } catch (err) {
     console.error('[superhuman]', err);
     return { tasks: [], status: 'error' };

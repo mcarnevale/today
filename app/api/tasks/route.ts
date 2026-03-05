@@ -1,19 +1,18 @@
 import { NextResponse } from 'next/server';
-import { fetchSuperhuman } from '@/lib/sources/superhuman';
+import { auth } from '@/auth';
+import { fetchGmail } from '@/lib/sources/gmail';
 import { fetchGranola } from '@/lib/sources/granola';
 import { fetchHubSpot } from '@/lib/sources/hubspot';
+import { getAIResults, getGeneratedTasks } from '@/lib/ai/analyze';
 import type { Task } from '@/lib/types';
 
 // ── TASK AGGREGATOR ──
-// Single endpoint the frontend calls. Directly imports source fetchers
-// (no internal HTTP calls) — clean, fast, works in all environments.
+// GET: Returns source tasks (for grouped views) + AI-generated tasks (for Inbox).
 //
-// Upgrade path:
-//   1. Add HUBSPOT_ACCESS_TOKEN to .env.local → HubSpot goes live
-//   2. Add GRANOLA_API_KEY → Granola goes live
-//   3. Add GMAIL credentials → Superhuman/Gmail goes live
-//   4. Replace scoring in app/page.tsx with a Claude API call that ranks
-//      tasks using full email/note/deal context
+// Wired:
+//   - HUBSPOT_ACCESS_TOKEN → fetches deals from HubSpot CRM
+//   - GRANOLA → MCP OAuth (Connect Granola) or GRANOLA_API_KEY (Enterprise)
+//   - GMAIL_* → fetches unread emails from Gmail
 
 function deduplicate(tasks: Task[]): Task[] {
   const seen = new Set<number>();
@@ -25,24 +24,44 @@ function deduplicate(tasks: Task[]): Task[] {
 }
 
 export async function GET() {
-  const [superhuman, granola, hubspot] = await Promise.all([
-    fetchSuperhuman(),
-    fetchGranola(),
+  const session = await auth();
+  const userId = session?.user?.email ?? null;
+
+  const [gmail, granola, hubspot, aiResults, generatedTasks] = await Promise.all([
+    fetchGmail(),
+    fetchGranola(userId),
     fetchHubSpot(),
+    userId ? getAIResults(userId) : Promise.resolve(new Map()),
+    userId ? getGeneratedTasks(userId) : Promise.resolve([]),
   ]);
 
   const allTasks = deduplicate([
-    ...superhuman.tasks,
+    ...gmail.tasks,
     ...granola.tasks,
     ...hubspot.tasks,
   ]).sort((a, b) => a.id - b.id);
 
+  // Merge legacy AI scoring results when present
+  const merged = allTasks.map((t) => {
+    if (!t.sourceId || !t.sourceType || !userId) return t;
+    const key = `${String(t.sourceType).toLowerCase()}:${String(t.sourceId)}`;
+    const ai = aiResults.get(key);
+    if (!ai) return t;
+    return { ...t, priority: ai.priority, aiScore: ai.score, aiFollowUp: ai.followUp };
+  });
+
   return NextResponse.json({
-    tasks: allTasks,
+    tasks: merged,
+    generatedTasks,
     sources: {
-      superhuman: superhuman.status,
+      gmail: gmail.status,
       granola: granola.status,
       hubspot: hubspot.status,
+    },
+    sourceCounts: {
+      gmail: gmail.tasks.length,
+      granola: granola.tasks.length,
+      hubspot: hubspot.tasks.length,
     },
     refreshedAt: new Date().toISOString(),
   });

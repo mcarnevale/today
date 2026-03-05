@@ -1,0 +1,38 @@
+{
+  "settings": {
+    "targetUrl": "https://example.com/webhook",
+    "maxConcurrentRequests": 10
+  },
+  "subscriptions": {
+    "crmObjects": [
+      {
+        "subscriptionType": "object.propertyChange",
+        "objectName": "contact",
+        "propertyName": "firstname",
+        "active": false
+      },
+      {
+        "subscriptionType": "object.creation",
+        "objectName": "contact",
+        "active": false
+      }
+    ],
+    "legacyCrmObjects": [
+      {
+        "subscriptionType": "contact.propertyChange",
+        "propertyName": "lastname",
+        "active": false
+      },
+      {
+        "subscriptionType": "contact.deletion",
+        "active": false
+      }
+    ],
+    "hubEvents": [
+      {
+        "subscriptionType": "contact.privacyDeletion",
+        "active": false
+      }
+    ]
+  }
+}

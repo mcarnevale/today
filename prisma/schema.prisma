@@ -1,0 +1,92 @@
+// ── TODAY APP DATA MODEL ──
+// For AI analysis results, sync state, and user settings.
+// Requires DATABASE_URL (Vercel Postgres, Neon, or any Postgres).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// User settings — Weekly Strategy, AI strategy preset, schedule
+model UserSettings {
+  id            String   @id @default(cuid())
+  userEmail     String   @unique @map("user_email")
+  weeklyStrategy String[] @map("weekly_strategy") // [priority1, priority2, priority3]
+  aiStrategyId  String?  @map("ai_strategy_id")   // Preset: "sales" | "account" | "executive"
+  schedule      Json?    // { times: ["08:00", "14:00"], timezone: "America/Los_Angeles" }
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("user_settings")
+}
+
+// AI analysis result per task — replaces rules-based scoring when present
+model AITaskResult {
+  id          String   @id @default(cuid())
+  userEmail   String   @map("user_email")
+  taskId      String   @map("task_id")   // Source-specific ID (email id, meeting id, deal id)
+  source      String   // "gmail" | "granola" | "hubspot"
+  aiPriority  String   @map("ai_priority")  // "high" | "medium" | "low"
+  aiScore     Int      @map("ai_score")     // 0-100
+  aiFollowUp  String?  @map("ai_follow_up") // Suggested action
+  analyzedAt  DateTime @map("analyzed_at")
+  runId       String?  @map("run_id")
+
+  @@unique([userEmail, taskId, source])
+  @@index([userEmail, analyzedAt])
+  @@map("ai_task_results")
+}
+
+// Sync state — last fetch cursor per source for incremental runs
+model SyncState {
+  id           String   @id @default(cuid())
+  userEmail    String   @map("user_email")
+  source       String   // "gmail" | "granola" | "hubspot"
+  lastSyncedAt DateTime @map("last_synced_at")
+  lastCursor   String?  @map("last_cursor")  // Page token, timestamp, etc.
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([userEmail, source])
+  @@map("sync_state")
+}
+
+// Analysis run metadata — for debugging and "Re-analyze now"
+model AnalysisRun {
+  id          String   @id @default(cuid())
+  userEmail   String   @map("user_email")
+  startedAt   DateTime @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  status      String   // "running" | "completed" | "failed"
+  strategyId  String?  @map("strategy_id")
+  errorMsg    String?  @map("error_msg")
+  taskCount   Int?     @map("task_count")
+
+  @@index([userEmail, startedAt])
+  @@map("analysis_runs")
+}
+
+// AI-generated action items — synthesized from Gmail, Granola, HubSpot
+// Stored per analysis run; frontend tracks completion in UI state
+model GeneratedTask {
+  id        String   @id @default(cuid())
+  userEmail String   @map("user_email")
+  runId     String   @map("run_id")
+  rank      Int      // 1-based sort order
+  title     String   // Actionable imperative (e.g. "Send revised pricing to Meridian")
+  context   String   // 1-2 sentences explaining why this matters now
+  priority  String   @map("priority")   // "high" | "medium" | "low"
+  urgency   String   @map("urgency")    // "today" | "this_week" | "later"
+  activity  String   @map("activity")   // "email" | "meeting" | "focus" | "other"
+  client    String   @map("client")
+  sources   String[] @map("sources")    // ["gmail", "hubspot", "granola"]
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userEmail, createdAt])
+  @@map("generated_tasks")
+}

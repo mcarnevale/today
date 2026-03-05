@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: "Mike's Command Center",
-  description: 'Personal AI command center — Superhuman · Granola · HubSpot',
+  title: "Today",
+  description: 'Personal AI command center — Gmail · Granola · HubSpot',
 };
 
 export default function RootLayout({
